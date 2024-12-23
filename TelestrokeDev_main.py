@@ -1,4 +1,7 @@
 import json
+import cv2
+import pywifi
+from pywifi import const, Profile
 import os, sys
 from PyQt6 import QtWidgets, QtGui, QtCore, uic
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QColor
@@ -21,13 +24,16 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget  # Import QVideoWidget from P
 from PyQt6.QtWidgets import QVBoxLayout  
 from PyQt6.QtCore import QUrl
 from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtCore import Qt
 from PyQt6.QtCore import QUrl
-from PyQt6.QtCore import Qt, QMetaObject, Q_ARG
+from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, QTimer
 from PyQt6.QtCore import pyqtSlot
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QScreen
 from PyQt6.QtCore import QStringListModel  # Import QStringListModel for QListView
 from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QPainter, QPainterPath
+from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtCore import QUrl
 # from PyQt6.QtMultimedia import QMediaContent
@@ -50,14 +56,14 @@ class MainWindow(QtWidgets.QMainWindow):
         uic.loadUi(base_path+r'./telestroke_device.ui', self)
 
         # Initialize PyWiFi
-        # self.wifi = pywifi.PyWiFi()
-        # self.interface = self.wifi.interfaces()[0]
-        # self.iface = self.wifi.interfaces()[0]  # Get the first wireless interface
-        # interfaces = self.wifi.interfaces()
-        # if len(interfaces) > 0:
-        #     self.interface = interfaces[0]
-        # else:
-        #     print("No Wi-Fi interfaces found")
+        self.wifi = pywifi.PyWiFi()
+        self.interface = self.wifi.interfaces()[0]
+        self.iface = self.wifi.interfaces()[0]  # Get the first wireless interface
+        interfaces = self.wifi.interfaces()
+        if len(interfaces) > 0:
+            self.interface = interfaces[0]
+        else:
+            print("No Wi-Fi interfaces found")
 
         # Create a layout to hold available network frames
         self.network_layout = QtWidgets.QVBoxLayout(self)  # Assuming you have a central layout for the widget
@@ -79,7 +85,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # self.current_screen = None  # Initialize current_screen
 
         # Initialize WebSocket client
-        self.websocket_client = WebSocketClient("ws://192.168.0.193:3001", self.handle_command)
+        self.websocket_client = WebSocketClient("ws://192.168.0.192:3001", self.handle_command)
         self.websocket_client.run()
 
         # Connect buttons to their respective slots
@@ -123,6 +129,8 @@ class MainWindow(QtWidgets.QMainWindow):
         t.start()
 
         self.btn_3.clicked.connect(lambda: self.leave_meeting())
+
+        self.btn_7.clicked.connect(lambda: self.scan_networks())
 
 
     def play_video(self):
@@ -212,25 +220,25 @@ class MainWindow(QtWidgets.QMainWindow):
         elif command['stop'] == True:
             window.stop_video()
         elif command.get('command') == 'speed':
-            window.change_speed(command.get('rate'))
+            window.set_speed(command.get('rate'))
 
 
     def handle_command(self, command):
         print('Im in handle_cmd of WS')
         print(command['exam_mode'])
         screen = command['eye_camera_control']
+        self.additional_window_1.show()
         if screen == 'left':
-                self.screen_number = 1
+                # self.screen_number = 1
                 self.webcam_track.set_screen_number(2)  # Update the webcam feed to show the left half
                 # Optional: You can bring the window to the front or set focus if needed
-                self.additional_window_1.show()
-                self.additional_window_2.hide()
+                # self.additional_window_2.hide()
         elif screen == 'right':
-                self.screen_number = 2
+                # self.screen_number = 1
                 # Optional: You can bring the window to the front or set focus if needed
                 self.webcam_track.set_screen_number(1)  # Update the webcam feed to show the right half
-                self.additional_window_1.hide()
-                self.additional_window_2.show()
+                # self.additional_window_1.show()
+                # self.additional_window_2.show()
         if command['exam_mode'] == 'Quadrant':
             if 'x' in command['coordinates'] and 'y' in command['coordinates']:
                 x = command['coordinates'].get('x')
@@ -238,17 +246,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 print("x = ",x,"y = ",y)
                 if self.screen_number == 1:
                     QMetaObject.invokeMethod(self.additional_window_1, "move_red_dot", Qt.ConnectionType.QueuedConnection, Q_ARG(int, x), Q_ARG(int, y))
-                elif self.screen_number == 2:
-                    QMetaObject.invokeMethod(self.additional_window_2, "move_red_dot", Qt.ConnectionType.QueuedConnection, Q_ARG(int, x), Q_ARG(int, y))
+        #         elif self.screen_number == 2:
+        #             QMetaObject.invokeMethod(self.additional_window_2, "move_red_dot", Qt.ConnectionType.QueuedConnection, Q_ARG(int, x), Q_ARG(int, y))
         elif command['exam_mode'] == 'CenterFocus':
             video_id = command['stimulus_type']
-            if self.screen_number == 1:
-                self.additional_window_1.load_video_by_id(video_id)
-                print("iM HERE")
-                self.process_command_on_window(self.additional_window_1, command)
-            else:
-                self.additional_window_2.load_video_by_id(video_id) 
-                self.process_command_on_window(self.additional_window_2, command)
+            # if self.screen_number == 1:
+            self.additional_window_1.load_video_by_id(video_id)
+            print("iM HERE")
+            self.process_command_on_window(self.additional_window_1, command)
+            # else:
+            #     self.additional_window_2.load_video_by_id(video_id) 
+            #     self.process_command_on_window(self.additional_window_2, command)
 
                
     def handle_screen_change(self, value):
@@ -674,7 +682,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def init_screen6(self):
-        self.btn_7.clicked.connect(lambda: self.scan_networks())
+        
         
         self.update_current_network_info()
 
@@ -737,130 +745,150 @@ class MainWindow(QtWidgets.QMainWindow):
         screens = QGuiApplication.screens()
         # Create and show additional windows
         self.additional_window_1 = AdditionalScreen()
-        self.additional_window_2 = AdditionalScreen()
+        # self.additional_window_2 = AdditionalScreen()
 
         # Get the geometry of the first and second screens
-        screen_geometry_1 = screens[0].geometry()  # Geometry of the primary screen
+        # screen_geometry_1 = screens[0].geometry()  # Geometry of the primary screen
         screen_geometry_2 = screens[1].geometry()  # Geometry of the second screen
 
         # Set geometry for each additional window
-        self.additional_window_1.setGeometry(screen_geometry_1)
-        self.additional_window_2.setGeometry(screen_geometry_2)
+        # self.additional_window_1.setGeometry(screen_geometry_1)
+        self.additional_window_1.setGeometry(screen_geometry_2)
 
         self.additional_window_1.show()
-        self.additional_window_2.show()
+        # self.additional_window_2.show()
 
 class AdditionalScreen(QtWidgets.QMainWindow):
     def __init__(self):
         super(AdditionalScreen, self).__init__()
         self.setFixedSize(1920, 1080)
         self.setWindowTitle("Stimulus Screen")
-        
-        # Set up the video widget
-        self.video_widget = QVideoWidget(self)
-        self.setCentralWidget(self.video_widget)
-        
-        # Set up the media player
-        self.media_player = QMediaPlayer()  # Initialize without VideoSurface
-        self.media_player.setVideoOutput(self.video_widget)
 
-        # Create a list to hold video paths for next/previous functionality
-        self.video_list = [base_path + r"./rsc/Video1.mp4", base_path + r"./rsc/Video2.mp4"]
-        self.current_video_index = 0
+        # Set up the central widget
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout()
+        self.central_widget.setLayout(self.layout)
 
-        # Add control buttons
-        self.create_controls()
+        # Video display label
+        self.video_label = QLabel(self)
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(self.video_label)
 
-        # Mapping of video IDs to file paths
+        # Initialize video list
         self.video_mapping = {
             '1': base_path + r"./rsc/Video1.mp4",
             '2': base_path + r"./rsc/Video2.mp4",
             # Add more mappings as needed
         }
+        self.current_video_index = 0
+
+        # Control buttons
+        # self.play_button = QPushButton("Play")
+        # self.play_button.clicked.connect(self.play_video)
+        # self.layout.addWidget(self.play_button)
+
+        # self.next_button = QPushButton("Next Video")
+        # self.next_button.clicked.connect(self.play_next_video)
+        # self.layout.addWidget(self.next_button)r
+
+        # Timer for updating the video frame
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_frame)
+        self.timer.start(30)
+        # Initialize OpenCV VideoCapture object
+        self.cap = None
 
         # Set up the red dot for eye-tracking stimulus
         self.red_dot = QLabel(self)
         self.red_dot.setStyleSheet("background-color: red; border-radius: 75px;")
         self.red_dot.setFixedSize(150, 150)
         self.red_dot.hide()  # Initially hide the red dot
-        
-    def create_controls(self):
-        
-        # Create a main layout that includes the video widget and the control buttons
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(self.video_widget)
-        # main_layout.addWidget(controls_widget)
 
-        # Create a central widget and set the main layout to it
-        container_widget = QWidget(self)
-        container_widget.setLayout(main_layout)
-        self.setCentralWidget(container_widget)
-    
+        self.is_paused = False
+        self.playback_speed = 1.0  # Default playback speed (medium)
+
     def load_video_by_id(self, video_id):
         video_path = self.video_mapping.get(video_id)
         if video_path:
             self.red_dot.hide()
-            self.video_widget.show()
+            self.central_widget.show()
             self.load_video(video_path)
         else:
             print(f"No video found for ID: {video_id}")
 
-    # def load_video(self, video_path=None):
-    #     # """Load the video without playing it."""
-    #     # Convert the video path to a QUrl
-    #     # Set the media content to the player
-    #     self.media_player.setSource(media_content)
-    #     self.media_player.play()
-    
-    # def play_video(self, video_path=None):
-    #     print("Video Path: ",video_path)
-    #     if video_path:
-    #         media_content = QMediaContent(QUrl.fromLocalFile(video_path))
-    #         self.media_player.setSource(media_content)
-    #     self.red_dot.hide()
-    #     self.video_widget.show()
-    #     self.media_player.play()
-
     def load_video(self, video_path=None):
-        # Load the video without using QMediaContent
+        # Load the video using OpenCV (no QMediaPlayer)
         if video_path:
-            print("im in load_video")
-            video_url = QUrl.fromLocalFile(video_path)
-            self.media_player.setSource(video_url)  # Set the video URL directly to media player
-            self.media_player.play()
+            print("Loading video:", video_path)
+            self.cap = cv2.VideoCapture(video_path)
 
-    def play_video(self, video_path=None):
-        print("Video Path: ", video_path)
-        if video_path:
-            video_url = QUrl.fromLocalFile(video_path)  # Convert video path to QUrl
-            self.media_player.setSource(video_url)  # Directly set the video URL to media player
-            self.red_dot.hide()
-            self.video_widget.show()
-            self.media_player.play()
+            if not self.cap.isOpened():
+                print("Error: Could not open video.")
+                return
+
+            # self.timer.start(30)  # Update the frame every 30 ms
+
+    def play_video(self):
+        """Start or resume video playback."""
+        if not self.video_mapping:
+            return
+
+        video_path = self.video_mapping[self.current_video_index]
+        self.cap = cv2.VideoCapture(video_path)
+
+        if not self.cap.isOpened():
+            print("Error: Could not open video.")
+            return
+
+        # Resume the video playback if it was paused
+        self.is_paused = False
+        # self.timer.start(30)  # Start with 30 ms delay for normal speed (medium)
 
     def pause_video(self):
-        self.media_player.pause()
+        """Pause the video playback."""
+        self.is_paused = True
 
-    def stop_video(self):
-        self.media_player.stop()
-
-    def change_speed(self, rate):
-        self.media_player.setPlaybackRate(rate) 
-
+    def set_speed(self, speed):
+        """Set playback speed. 'slow', 'medium', and 'high'."""
+        if speed == "slow":
+            self.playback_speed = 0.5
+            print("Playback speed set to slow (0.5x)")
+        elif speed == "medium":
+            self.playback_speed = 1.0
+            print("Playback speed set to medium (1.0x)")
+        elif speed == "high":
+            self.playback_speed = 2.0
+            print("Playback speed set to high (2.0x)")
+        else:
+            print("Error: Invalid speed. Choose from 'slow', 'medium', or 'high'.")
+            
     def play_next_video(self):
-        self.current_video_index = (self.current_video_index + 1) % len(self.video_list)
-        self.play_video(self.video_list[self.current_video_index])
+        self.current_video_index += 1
+        if self.current_video_index >= len(self.video_mapping):
+            self.current_video_index = 0
+        self.play_video()
 
-    def play_previous_video(self):
-        self.current_video_index = (self.current_video_index - 1) % len(self.video_list)
-        self.play_video(self.video_list[self.current_video_index])
-
-    def update_red_dot_position(self, x, y):
-        self.hide_video()
-        # Update red dot position based on received coordinates
-        self.red_dot.move(x, y)
-        self.red_dot.show()
-
+    def update_frame(self):
+        if self.cap:
+            ret, frame = self.cap.read()
+            if ret:
+                # Convert the frame to RGB format for QLabel
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, _ = rgb_image.shape
+                
+                # Create the QImage using the RGB frame
+                q_image = QImage(rgb_image.data, w, h, 3 * w, QImage.Format.Format_RGB888)
+                
+                # Scale the image to fit the label size (stretching the image to fit the available space)
+                scaled_pixmap = QPixmap.fromImage(q_image).scaled(self.video_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                
+                # Set the scaled image to the QLabel
+                self.video_label.setPixmap(scaled_pixmap)
+            # else:
+            #     self.cap.release()
+            #     self.timer.stop()
+    
     @pyqtSlot(int, int)
     def move_red_dot(self, x, y):
         print(f"Received coordinates: x={x}, y={y}")  # Debugging line
@@ -872,7 +900,7 @@ class AdditionalScreen(QtWidgets.QMainWindow):
         
         self.red_dot.move(x_pos, y_pos)
         self.red_dot.show()
-        self.video_widget.hide()
+        self.central_widget.hide()
 
     def populate_appointments_in_listview(self, appointments):
         # Create a standard item model
@@ -898,7 +926,7 @@ class NetworkDelegate(QtWidgets.QStyledItemDelegate):
         super().paint(painter, option, index)
         
         # Fetch the network data
-        network = index.data(QtCore.Qt.UserRole)
+        network = index.data(Qt.ItemDataRole.UserRole)
 
         # Draw the background (white, rounded) with no border and bottom margin
         painter.save()
@@ -911,7 +939,7 @@ class NetworkDelegate(QtWidgets.QStyledItemDelegate):
         adjusted_rect = QtCore.QRect(rect.x(), rect.y(), rect.width(), rect.height() - bottom_margin)
 
         # Set rendering hints
-        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # White background
         painter.setPen(QtCore.Qt.NoPen)  # Set no pen to avoid borders
 
@@ -1096,7 +1124,8 @@ def main():
 
     # Get the geometry of the second screen
     screen_geometry = second_screen.geometry()
-
+    # player = AdditionalScreen()
+    # player.show()
     # Set the window geometry based on the second screen's geometry
     window.setGeometry(screen_geometry)
     window.showFullScreen()
