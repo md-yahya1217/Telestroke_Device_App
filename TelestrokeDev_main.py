@@ -1,7 +1,6 @@
 import json
 import cv2
-import pywifi
-from pywifi import const, Profile
+import subprocess
 import os, sys
 from PyQt6 import QtWidgets, QtGui, QtCore, uic
 from PyQt6.QtGui import QPixmap, QImage, QIntValidator, QDoubleValidator, QColor
@@ -36,12 +35,8 @@ from PyQt6.QtGui import QPainter, QPainterPath
 from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtCore import QUrl
-# from PyQt6.QtMultimedia import QMediaContent
-
-
-# import pywifi
-# from pywifi import const, Profile
 import requests
+from datetime import datetime
 
 base_path = ""
 # base_path = sys._MEIPASS #For build purpose
@@ -49,22 +44,19 @@ base_path = ""
 #To build this code make sure all paths have "/" to change directory.
 
 #self.button_A.setIcon(QIcon(base_path+"/rsc/rsc3.png"))
-
+appointment_list = []
+token_list = []
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         uic.loadUi(base_path+r'./telestroke_device.ui', self)
 
-        # Initialize PyWiFi
-        self.wifi = pywifi.PyWiFi()
-        self.interface = self.wifi.interfaces()[0]
-        self.iface = self.wifi.interfaces()[0]  # Get the first wireless interface
-        interfaces = self.wifi.interfaces()
-        if len(interfaces) > 0:
-            self.interface = interfaces[0]
-        else:
-            print("No Wi-Fi interfaces found")
+        ########################### TEST CODE BEGIN ###########################
 
+
+
+        ########################### TEST CODE END ###########################
+        
         # Create a layout to hold available network frames
         self.network_layout = QtWidgets.QVBoxLayout(self)  # Assuming you have a central layout for the widget
         self.network_frames = []  # List to hold QFrame references
@@ -80,27 +72,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.additional_window_1 = None  # Reference to the first additional window
         self.additional_window_2 = None  # Reference to the second additional window
         self.screen_number = 1
+        self.meeting_id = None
+        self.meeting = None
+        self.token = None
+        self.prev_scr = None
         # Initialize custom webcam video track
-        self.webcam_track = WebcamVideoTrack()
+        # self.webcam_track = WebcamVideoTrack()
+        self.webcam_track = None
         # self.current_screen = None  # Initialize current_screen
 
         # Initialize WebSocket client
-        self.websocket_client = WebSocketClient("ws://192.168.0.192:3001", self.handle_command)
+        self.websocket_client = WebSocketClient("ws://192.168.0.189:3001", self.handle_command)
         self.websocket_client.run()
 
-        # Connect buttons to their respective slots
-        #self.pushButton_left.clicked.connect(lambda: self.play_video_on_screen(1, "./rsc/Video1.mp4"))
-        #self.pushButton_right.clicked.connect(lambda: self.play_video_on_screen(2, "./rsc/Video1.mp4"))
         # Example JSON data
-        self.json_data = [
-            {"meetingId": "i4iu-856b-fihd", "AppointmentTime": "09:00 am", "AppointmentDate": "30th February, 2024", "DoctorName": "Dr. Raymond Reddington"},
-            {"meetingId": "3fp5-l0ww-86lg", "AppointmentTime": "11:00 am", "AppointmentDate": "1st March, 2024", "DoctorName": "Dr. Liz Keen"}
-        ]
+        # self.json_data = [
+        #     {"meetingId": "i4iu-856b-fihd", "AppointmentTime": "09:00 am", "AppointmentDate": "30th February, 2024", "DoctorName": "Dr. Raymond Reddington"},
+        #     {"meetingId": "3fp5-l0ww-86lg", "AppointmentTime": "11:00 am", "AppointmentDate": "1st March, 2024", "DoctorName": "Dr. Liz Keen"}
+        # ]
 
-        #self.btn_9.clicked.connect(lambda: self.handle_screen_change(6))
+        
+        self.listView.clicked.connect(lambda: self.on_network_double_clicked)
+        self.listView_2.clicked.connect(self.handle_item_clicked)
 
-        self.listView.doubleClicked.connect(lambda: self.on_network_double_clicked)
-        self.listView_2.doubleClicked.connect(lambda: self.handle_screen_change(4))
 
         self.appointment_1.hide()
 
@@ -108,16 +102,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.available_network.hide()
     
         self.screen = 1
-        # self.handle_screen_change(1)
+        self.handle_screen_change(1)
         
 
-        self.btn_1.clicked.connect(lambda: self.handle_screen_change(2))
-        self.btn_2.clicked.connect(lambda: self.register_device())
-        self.btn_6.clicked.connect(lambda: self.handle_screen_change(1))
+        self.btn_1.pressed.connect(lambda: self.handle_screen_change(3))
+        # self.btn_2.pressed.connect(lambda: self.register_device())
+        self.btn_6.pressed.connect(lambda: self.handle_screen_change(1))
+        # self.btn_8.pressed.connect(lambda: self.update_ui_with_message(f"Fetching Appointments..{'\n'}Please wait"))
+        self.btn_8.pressed.connect(lambda: self.handle_fetch_appointments())
+
+        self.btn_11.pressed.connect(lambda: self.toggle_wifi())
         
         # self.btn_3.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.leave_meeting()))
 
-        self.pushButton_back.clicked.connect(lambda: self.handle_screen_change(2))
+        self.pushButton_back.clicked.connect(lambda: self.handle_screen_change(1))
         # self.pushButton_2.clicked.connect(lambda: self.handle_screen_change(4))
 
         # self.handle_screen_change(6)
@@ -129,9 +127,137 @@ class MainWindow(QtWidgets.QMainWindow):
         t.start()
 
         self.btn_3.clicked.connect(lambda: self.leave_meeting())
+        self.btn_7.clicked.connect(lambda: self.update_networks())
 
-        self.btn_7.clicked.connect(lambda: self.scan_networks())
+    def handle_fetch_appointments(self):
+        # Update the UI with a message
+        self.update_ui_with_message(f"Fetching Appointments..{'\n'}Please wait")
+        # Introduce a delay before fetching appointments
+        time.sleep(0.5)  # Delay for 3 seconds
+        # Fetch the appointments
+        self.fetch_appointments()
 
+    def toggle_wifi(self):
+        print(f"Toggle Wifi....... Self.prev_scr = {self.prev_scr}")
+        if self.screen not in (6, 7):
+            self.prev_scr = self.screen
+            self.handle_screen_change(6)
+        else:
+            self.handle_screen_change(self.prev_scr)
+
+    def handle_item_clicked(self, index):
+        print("Clicked item index:", index.row())
+        self.meeting_id = appointment_list[index.row()]
+        print(token_list)
+        self.token = token_list[index.row()]
+        print(self.meeting_id)
+
+        self.handle_screen_change(4)  
+
+    def fetch_appointments(self):
+        print("I've reached fetch_appointment")
+        def background_fetch():
+            print("I've reached fetch_appointment")
+            max_retries = 3  # Maximum number of retries
+            retry_delay = 2  # Delay in seconds between retries
+
+            try:
+                for attempt in range(max_retries):
+                    try:
+                        # Define the URL and parameters
+                        url = 'http://192.168.0.189:5000/api/appointments'
+                        params = {
+                            'Dev_ID': 1000,  # Replace with the actual device ID
+                            'status': 'Pending'  # Replace with the actual status value
+                        }
+
+                        # Send the GET request
+                        response = requests.get(url, params=params, timeout=5)  # Add a timeout for the request
+
+                        # Check the response status
+                        if response.status_code == 200:
+                            res = response.json()
+                            self.update_ui_with_appointments(res)
+                            return  # Exit after a successful response
+
+                        else:
+                            print(f"Attempt {attempt + 1}/{max_retries}: Server error with status code {response.status_code}")
+                            self.update_ui_with_error(f"Retrying..{'\n'}Attempt: {attempt + 1}/{max_retries}")
+
+                    except requests.exceptions.RequestException as e:
+                        print(f"Attempt {attempt + 1}/{max_retries}: Error occurred: {e}")
+                        self.update_ui_with_error(f"Retrying.. Attempt: {attempt + 1}/{max_retries}")
+
+                    time.sleep(retry_delay)  # Wait before retrying
+
+                # If all retries fail, update the UI with an error message
+                self.update_ui_with_error(f"Cannot Fetch Appointments...{'\n'}Check your server or internet connection.")
+
+            except Exception as e:
+                # Handle unexpected exceptions
+                self.update_ui_with_error(f"Unexpected Error: {e}")
+                print(f"An unexpected error occurred: {e}")
+
+        # Start the background thread
+        threading.Thread(target=background_fetch, daemon=True).start()
+
+    def update_ui_with_appointments(self, res):
+        """Update the UI with appointment data on the main thread."""
+        if res == []:
+            self.label_22.show()
+            self.label_22.setText(f"No Appointments Found.{'\n'}Kindly check with your Doctor.")
+            self.listView_2.hide()
+            return
+        elif res:
+            self.label_22.hide()
+            self.listView_2.show()
+            self.populate_appointments_in_listview(res)
+            return
+
+    def update_ui_with_error(self, error_message):
+        """Update the UI with an error message on the main thread."""
+        self.listView_2.hide()
+        self.label_22.show()
+        self.label_22.setStyleSheet("color: rgb(192, 28, 40);")
+        self.label_22.setText(f"Error: {error_message}")
+
+    def update_ui_with_message(self, message):
+        """Update the UI with a general message on the main thread."""
+        self.listView_2.hide()
+        self.label_22.show()
+        self.label_22.setStyleSheet("color: black;")
+        self.label_22.setText(f"{message}")
+        # return
+
+    def get_wifi_ssids():
+        try:
+            # Run the nmcli command
+            result = subprocess.run(['nmcli', 'dev', 'wifi'], stdout=subprocess.PIPE, text=True)
+            
+            # Split the output into lines
+            lines = result.stdout.splitlines()
+            
+            # Extract SSIDs from the lines
+            ssids = []
+            for line in lines[1:]:  # Skip the header line
+                parts = line.split()
+                if len(parts) > 0:
+                    ssid = " ".join(parts[0:-6])  # Adjust slicing based on your nmcli output
+                    ssids.append(ssid.strip())
+            
+            return ssids
+        
+        except Exception as e:
+            print(f"Error fetching Wi-Fi SSIDs: {e}")
+            return []
+        
+    # def get_current_network():
+    #     try:
+    #         result = subprocess.run(['iwgetid', '-r'], stdout=subprocess.PIPE, text=True)
+    #         return result.stdout.strip()  # Strip removes any trailing newline characters
+    #  python    except Exception as e:
+    #         print(f"Error fetching Current Wi-Fi Network: {e}")
+    #         return None
 
     def play_video(self):
         # Logic to play video
@@ -140,6 +266,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def pause_video(self):
         # Logic to pause video
         print("Pausing video")
+        
 
     def closeEvent(self, event):
         # Ensure WebSocketClient is stopped properly on window close
@@ -151,13 +278,93 @@ class MainWindow(QtWidgets.QMainWindow):
         asyncio.set_event_loop(loop)
         loop.run_forever()
 
-    def join_meeting(self):
-        asyncio.run_coroutine_threadsafe(self.start_meeting(), self.loop)
+
+    def join_meeting(self, token, meeting_id):
+        """Modified to accept token and meeting ID."""
+        print("ab yahan bhi pohnch gaye hain")
+                
+        print("MeetingID: ",meeting_id)
+        # self.start_meeting(token, meeting_id)
+        asyncio.run_coroutine_threadsafe(self.start_meeting(token, meeting_id), self.loop)
+
+    # def leave_meeting(self):
+    #     if self.meeting is None:
+    #         print("No active meeting to leave.")
+    #         return
+    #     print(f"Meeting object: {self.meeting}")
+    #     try:
+    #         print("Attempting to leave the meeting...")
+    #         self.meeting.leave()  # Ensure this is the correct async method to leave the meeting
+    #         print("Meeting left successfully.")
+    #         print(f"Meeting object: {self.meeting}")
+    #         # self.handle_screen_change(3)
+    #     except Exception as e:
+    #         print(f"Error while leaving the meeting: {e}")
+    #         self.meeting = None
+    #         self.handle_screen_change(3)
+    #     finally:
+    #         self.meeting = None
+    #         print(f"Meeting object: {self.meeting}")
+    #         self.handle_screen_change(3)
+
+    # def leave_meeting(self):
+    #     try:
+    #         print("Attempting to leave the meeting...")
+    #         if self.meeting:
+    #             # Call the synchronous leave method
+    #             self.meeting.leave()
+    #             # self.meeting.end()
+    #             print("Meeting left successfully.")
+    #             print(f"Before cleanup: {self.meeting}")
+    #             self.meeting.remove_all_listeners()  # Clear the meeting reference after leaving
+    #             # self.meeting = None
+    #             print(f"After cleanup: {self.meeting}")
+    #         else:
+    #             print("No active meeting to leave.")
+    #         self.handle_screen_change(3)  # Navigate to the desired screen
+    #     except Exception as e:
+    #         print(f"Error while leaving the meeting: {e}")
+
+
 
     def leave_meeting(self):
-        asyncio.run_coroutine_threadsafe(self.end_meeting(), self.loop)
+            self.webcam_track = None
+            asyncio.run_coroutine_threadsafe(self.leave_meeting_sdk(), self.loop)
+            print("I'm leaving the meeting..")
+            # self.meeting.end()
+            self.handle_screen_change(3)
 
+    async def leave_meeting_sdk(self):
+        # try:
+            # Ensure `self.meeting` exists and leave the meeting
+        if self.meeting:
+            meet = self.meeting
+            print(meet.listeners)
 
+            print(f"Meeting Info from leave: {meet}")
+            # self.meeting.disable_webcam()
+            self.meeting.release()
+            # self.meeting.disable_mic()
+            await self.meeting.leave()  # Use `async_leave()` if provided by VideoSDK
+            # self.meeting = None
+            await self.webcam_track.stop()
+            await self.webcam_track.cap.release()
+            self.webcam_track = None
+            # self.webcam_track = WebcamVideoTrack()
+            # self.join = False
+            print("Successfully left the meeting.")
+            return
+        else:
+            print("No active meeting to leave.")
+        # except Exception as e:
+        #     self.meeting = None
+        #     print(f"Error while leaving the meeting: {e}")
+
+    # Call this method in the appropriate event loop
+    # def leave_meeting_safe(self):
+    #     asyncio.run_coroutine_threadsafe(self.leave_meeting(), self.loop)
+    #     print("Initiated leave meeting...")
+    #     self.handle_screen_change(3)
 
     async def end_meeting(self):
 
@@ -167,18 +374,95 @@ class MainWindow(QtWidgets.QMainWindow):
         self.handle_screen_change(3)
 
 
-    async def start_meeting(self):
+    # async def start_meeting(self):
         
-        if self.join == False:
-            self.join = True
-            dotenv.load_dotenv()
-            # self.webcam_track = WebcamVideoTrack()
+    #     if self.join == False:
+    #         self.join = True
+    #         dotenv.load_dotenv()
+    #         # self.webcam_track = WebcamVideoTrack()
 
-            VIDEOSDK_TOKEN = os.getenv("VIDEOSDK_TOKEN")
-            MEETING_ID = os.getenv("MEETING_ID")
-            NAME = "Wajahat"
+    #         VIDEOSDK_TOKEN = os.getenv("VIDEOSDK_TOKEN")
+    #         MEETING_ID = os.getenv("MEETING_ID")
+    #         NAME = "Wajahat"
             
 
+    #         meeting_config = MeetingConfig(
+    #             meeting_id=MEETING_ID,
+    #             name=NAME,
+    #             mic_enabled=True,
+    #             token=VIDEOSDK_TOKEN,
+    #             custom_camera_video_track=self.webcam_track
+    #         )
+
+    #         self.meeting = VideoSDK.init_meeting(**meeting_config)
+    #         self.meeting.add_event_listener(MyMeetingEventHandler())
+
+    #         try:
+    #             await self.meeting.async_join()
+    #             print("Joined successfully")
+    #             # Assuming you have a `meeting` object initialized and joined
+    #             participants = self.meeting.participants
+
+    #             # Check the number of participants
+    #             total_participants = len(participants)
+    #             print(f"Total number of participants: {total_participants}")
+                
+    #         except Exception as e:
+    #             print(f"Error while joining the meeting: {e}")
+    #             return
+
+    #         local_participant = self.meeting.local_participant
+    #         print("Local participant:", local_participant.id, local_participant.display_name)
+
+    #     else:
+    #         print("No need")
+    #         # self.handle_screen_change(4)
+
+    def get_token(self):
+        try:
+            # Constructing the URL using an environment variable
+            backend_url = "http://192.168.0.189:5000"
+
+            url = f"{backend_url}/get-token"
+            response = requests.get(url)
+            print(f"Received Token: ${response}")
+            
+            # Check if the request was successful
+            response.raise_for_status()
+            
+            # Extracting the token from the JSON response
+            data = response.json()
+            token = data.get("token")
+            print("Token received:", token)
+            return token
+        except requests.exceptions.RequestException as e:
+            print("Error fetching token:", e)
+            return None
+        except ValueError as e:
+            print("Error:", e)
+            return None
+
+    async def start_meeting(self, token, meeting_id):
+        try:
+            if not self.join:  # Join only if not already joined
+                self.join = True
+                # self.webcam_track = WebcamVideoTrack()
+
+
+            if self.webcam_track is None:
+                print(f"Self.webcam_track: {self.webcam_track}")
+                self.webcam_track = WebcamVideoTrack()
+
+            print(f"webcam track: {self.webcam_track}")
+
+            VIDEOSDK_TOKEN = self.get_token()
+            MEETING_ID = meeting_id
+            NAME = "Anonymous"
+
+            # self.meeting = None
+            print(f"Meeting: {self.meeting}")
+
+            # Reinitialize the meeting object
             meeting_config = MeetingConfig(
                 meeting_id=MEETING_ID,
                 name=NAME,
@@ -187,30 +471,93 @@ class MainWindow(QtWidgets.QMainWindow):
                 custom_camera_video_track=self.webcam_track
             )
 
+                # speaker_enable = True,
+            print(f"Meeting: {self.meeting}")
+
             self.meeting = VideoSDK.init_meeting(**meeting_config)
             self.meeting.add_event_listener(MyMeetingEventHandler())
 
-            try:
-                await self.meeting.async_join()
-                print("Joined successfully")
-                # Assuming you have a `meeting` object initialized and joined
-                participants = self.meeting.participants
-
-                # Check the number of participants
-                total_participants = len(participants)
-                print(f"Total number of participants: {total_participants}")
-                
-            except Exception as e:
-                print(f"Error while joining the meeting: {e}")
-                return
-
-            local_participant = self.meeting.local_participant
-            print("Local participant:", local_participant.id, local_participant.display_name)
-
-        else:
-            print("No need")
-            # self.handle_screen_change(4)
+            await self.meeting.async_join()
+            print("Joined successfully")
         
+        except Exception as e:
+            print(f"Error while joining the meeting: {e}")
+            self.meeting = None  # Reset meeting object on failure
+            self.join = False
+
+    # async def start_meeting(self, token, meeting_id):
+    #     try:
+    #         if not self.join:  # Join only if not already joined
+    #             self.join = True
+
+    #         VIDEOSDK_TOKEN = self.get_token()
+    #         MEETING_ID = meeting_id
+    #         NAME = "Anonymous"
+
+    #         # self.meeting = None
+    #         print(f"Meeting: {self.meeting}")
+
+    #         # Reinitialize the meeting object
+    #         meeting_config = MeetingConfig(
+    #             meeting_id=MEETING_ID,
+    #             name=NAME,
+    #             mic_enabled=True,
+    #             token=VIDEOSDK_TOKEN,
+    #             custom_camera_video_track=self.webcam_track
+    #         )
+
+    #             # speaker_enable = True,
+    #         print(f"Meeting: {self.meeting}")
+
+    #         self.meeting = VideoSDK.init_meeting(**meeting_config)
+    #         self.meeting.add_event_listener(MyMeetingEventHandler())
+
+    #         await self.meeting.async_join()
+    #         print("Joined successfully")
+        
+    #     except Exception as e:
+    #         print(f"Error while joining the meeting: {e}")
+    #         self.meeting = None  # Reset meeting object on failure
+    #         self.join = False
+
+    # async def start_meeting(self, token, meeting_id):
+    #     if self.join == False:
+    #         self.join = True
+    #         dotenv.load_dotenv()
+
+    #         VIDEOSDK_TOKEN = self.get_token()  # Use the token passed from the selected appointment
+    #         MEETING_ID = meeting_id  # Use the meeting ID passed from the selected appointment
+    #         NAME = "Anonymous"
+
+    #         meeting_config = MeetingConfig(
+    #             meeting_id=MEETING_ID,
+    #             name=NAME,
+    #             mic_enabled=True,
+    #             token=VIDEOSDK_TOKEN,
+    #             custom_camera_video_track=self.webcam_track
+    #         )
+
+    #         self.meeting = VideoSDK.init_meeting(**meeting_config)
+    #         self.meeting.add_event_listener(MyMeetingEventHandler())
+
+    #         try:
+    #             await self.meeting.async_join()
+    #             print("Joined successfully")
+    #             participants = self.meeting.participants
+
+    #             # Check the number of participants
+    #             total_participants = len(participants)
+    #             print(f"Total number of participants: {total_participants}")
+                
+    #         except Exception as e:
+    #             print(f"Error while joining the meeting: {e}")
+    #             return
+
+    #         local_participant = self.meeting.local_participant
+    #         print("Local participant:", local_participant.id, local_participant.display_name)
+
+    #     else:
+    #         print("No need")    
 
     def process_command_on_window(self, window, command):
         if command['stop'] == False:
@@ -218,7 +565,7 @@ class MainWindow(QtWidgets.QMainWindow):
         elif command.get('command') == 'pause':
             window.pause_video()
         elif command['stop'] == True:
-            window.stop_video()
+            window.pause_video()
         elif command.get('command') == 'speed':
             window.set_speed(command.get('rate'))
 
@@ -264,17 +611,20 @@ class MainWindow(QtWidgets.QMainWindow):
         #     return
 
         self.screen = value
+        self.icon_wifi.show()
+        self.icon_battery.show()
+        self.top_bar.show()
 
 
         if self.screen == 1:
-            self.screen_1.hide()
+            self.screen_1.show()
             self.screen_2.hide()
             self.screen_3.hide()
             self.screen_4.hide()
             self.screen_5.hide()
-            self.screen_6.show()
+            self.screen_6.hide()
             self.screen_7.hide()
-            self.init_screen6()
+            # self.init_screen6()
 
         elif self.screen == 2:
             self.screen_1.hide()
@@ -297,9 +647,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.init_screen3()
 
         elif self.screen == 4:
-            if not self.additional_windows_created:
-                self.create_two_additional_windows()
-                self.additional_windows_created = True
+                
+            if self.meeting_id and self.token:
+                # Call join_meeting with the stored meeting_id and token
+                print("yahan pohnch gaye hain")
+                self.join_meeting(self.token, self.meeting_id)
+
+            # if not self.additional_windows_created:
+            #     self.create_two_additional_windows()
+            #     self.additional_windows_created = True
             self.screen_4.show()
             self.screen_3.hide()
             self.screen_1.hide()
@@ -310,7 +666,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.init_screen4()
 
         elif self.screen == 6:
-            self.screen_3.show()
+            self.screen_3.hide()
             self.screen_1.hide()
             self.screen_2.hide()
             self.screen_4.hide()
@@ -338,76 +694,76 @@ class MainWindow(QtWidgets.QMainWindow):
         print("Im screen 2")
         self.label_20.hide()
 
-    def register_device(self):
-     #   patientid = self.lineEdit.text()
-     #   print(f"Patient ID Entered: {patientid}")
+    # def register_device(self):
+    #     patientid = self.lineEdit.text()
+    #     print(f"Patient ID Entered: {patientid}")
 
-        # # The URL of the API endpoint
-        # url = 'http://192.168.0.185:5000/api/device_registration'
+    #     # The URL of the API endpoint
+    #     url = 'http://192.168.0.192:5000/api/device_registration'
 
-        # # The data to be sent in the POST request
-        # data = {
-        #     'ID': PatientID,
-        #     'DeviceID': 1007
-        # }
+    #     # The data to be sent in the POST request
+    #     data = {
+    #         'ID': patientid,
+    #         'DeviceID': 1007
+    #     }
 
-        # try:
-        #     # Sending the POST request
-        #     response = requests.post(url, json=data)
+    #     try:
+    #         # Sending the POST request
+    #         response = requests.post(url, json=data)
 
-        #     # Handle the response based on status code
-        #     if response.status_code == 200:
-        #         result = response.json()
-        #         if result.get('message') == 'Successful':
-        #             self.label_20.hide()  # Hide the error label if it was shown previously
-        #             self.handle_screen_change(3)  # Assuming this changes to the next screen
-        #         else:
-        #             self.label_20.show()
-        #             self.label_20.setText("Unexpected success response.")
-        #             self.label_20.setStyleSheet("color:red;")
+    #         # Handle the response based on status code
+    #         if response.status_code == 200:
+    #             result = response.json()
+    #             if result.get('message') == 'Successful':
+    #                 self.label_20.hide()  # Hide the error label if it was shown previously
+    #                 self.handle_screen_change(3)  # Assuming this changes to the next screen
+    #             else:
+    #                 self.label_20.show()
+    #                 self.label_20.setText("Unexpected success response.")
+    #                 self.label_20.setStyleSheet("color:red;")
 
-        #     elif response.status_code == 400:
-        #         result = response.json()
-        #         if result.get('error') == 'ID and Device ID are required.':
-        #             self.label_20.show()
-        #             self.label_20.setText("Error: ID and Device ID are required.")
-        #             self.label_20.setStyleSheet("color:red;")
+    #         elif response.status_code == 400:
+    #             result = response.json()
+    #             if result.get('error') == 'ID and Device ID are required.':
+    #                 self.label_20.show()
+    #                 self.label_20.setText("Error: ID and Device ID are required.")
+    #                 self.label_20.setStyleSheet("color:red;")
 
-        #     elif response.status_code == 404:
-        #         result = response.json()
-        #         if result.get('error') == 'No such ID':
-        #             self.label_20.show()
-        #             self.label_20.setText("Error: No patient found with the provided ID.")
-        #             self.label_20.setStyleSheet("color:red;")
+    #         elif response.status_code == 404:
+    #             result = response.json()
+    #             if result.get('error') == 'No such ID':
+    #                 self.label_20.show()
+    #                 self.label_20.setText("Error: No patient found with the provided ID.")
+    #                 self.label_20.setStyleSheet("color:red;")
 
-        #     elif response.status_code == 500:
-        #         result = response.json()
-        #         if result.get('error') == 'An error occurred while updating DeviceID.':
-        #             self.label_20.show()
-        #             self.label_20.setText("Error: Internal server error.")
-        #             self.label_20.setStyleSheet("color:red;")
-        #         else:
-        #             self.label_20.show()
-        #             self.label_20.setText("Unexpected server error.")
-        #             self.label_20.setStyleSheet("color:red;")
+    #         elif response.status_code == 500:
+    #             result = response.json()
+    #             if result.get('error') == 'An error occurred while updating DeviceID.':
+    #                 self.label_20.show()
+    #                 self.label_20.setText("Error: Internal server error.")
+    #                 self.label_20.setStyleSheet("color:red;")
+    #             else:
+    #                 self.label_20.show()
+    #                 self.label_20.setText("Unexpected server error.")
+    #                 self.label_20.setStyleSheet("color:red;")
 
-        #     else:
-        #         self.label_20.show()
-        #         self.label_20.setText(f"Unexpected status code {response.status_code}: {response.text}")
-        #         self.label_20.setStyleSheet("color:red;")
+    #         else:
+    #             self.label_20.show()
+    #             self.label_20.setText(f"Unexpected status code {response.status_code}: {response.text}")
+    #             self.label_20.setStyleSheet("color:red;")
 
-        # except requests.exceptions.RequestException as e:
-        #     # Handle exceptions like connection errors
-        #     self.label_20.show()
-        #     self.label_20.setText(f"Request failed: {e}")
-        #     self.label_20.setStyleSheet("color:red;")
+    #     except requests.exceptions.RequestException as e:
+    #         # Handle exceptions like connection errors
+    #         self.label_20.show()
+    #         self.label_20.setText(f"Request failed: {e}")
+    #         self.label_20.setStyleSheet("color:red;")
 
-        # # If no Patient ID was entered
-        # if not PatientID:
-        #     self.label_20.show()
-        #     self.label_20.setText("Error: Patient ID not Entered!")
-        #     self.label_20.setStyleSheet("color:red;")
-        self.handle_screen_change(3)
+    #     # If no Patient ID was entered
+    #     if not patientid:
+    #         self.label_20.show()
+    #         self.label_20.setText("Error: Patient ID not Entered!")
+    #         self.label_20.setStyleSheet("color:red;")
+    #     self.handle_screen_change(3)
 
     def show_keyboard(self, event):
         self.keyboard.show()
@@ -419,7 +775,9 @@ class MainWindow(QtWidgets.QMainWindow):
         shadow1.setBlurRadius(60)
         shadow1.setOffset(0, 10)
         self.appointment_1.setGraphicsEffect(shadow1)
-        self.populate_appointments_in_listview(self.json_data)
+        self.label_22.hide()
+        self.listView_2.hide()
+        # self.populate_appointments_in_listview(self.json_data)
 
         self.pushButton_2.clicked.connect(lambda: self.handle_screen_change(4))
 
@@ -427,8 +785,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # # Additional initialization logic for screen 4 (if any)
         # model = self.listView_2.model()
         # network = model.itemFromIndex(index).data(QtCore.Qt.UserRole)  # Retrieve the network data
-        self.create_two_additional_windows()
-        self.join_meeting()
+        if not self.additional_windows_created:
+                self.create_two_additional_windows()
+                self.additional_windows_created = True
+        # self.join_meeting()
         pass
 
     def populate_appointments_in_listview(self, appointments):
@@ -436,33 +796,87 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for appointment in appointments:
             item = QtGui.QStandardItem()
-            item.setData(appointment, QtCore.Qt.ItemDataRole.UserRole)
+            item.setData(appointment, QtCore.Qt.ItemDataRole.UserRole)  # Storing appointment data
             model.appendRow(item)
 
         self.listView_2.setModel(model)
         self.listView_2.setItemDelegate(AppointmentDelegate(self.listView_2))
 
+        # Connect double-click signal to the handler
+        # self.listView_2.Clicked.connect(self.handle_item_double_click)
+        
+    def handle_item_double_click(self, index):
+        # Retrieve the appointment data from the clicked item
+        model = self.listView_2.model()
+        appointment = model.itemFromIndex(index).data(QtCore.Qt.ItemDataRole.UserRole)
+
+        # Get the meeting_id and token from the appointment data
+        meeting_id = appointment.get('meetingId')  # Ensure 'meetingId' exists in the appointment data
+        token = appointment.get('token')  # Ensure 'token' exists in the appointment data
+
+        # Call join_meeting with the relevant information
+        if meeting_id and token:
+            self.join_meeting(meeting_id, token)
+        else:
+            print("Meeting ID or token missing.")
+
 
     def scan_networks(self):
         print("Inside scan_networks")
         # Start scanning networks
-        self.interface.scan()  # Start scanning
         self.update_current_network_info()
-        QtCore.QTimer.singleShot(2500, self.update_networks)  # Wait for results
 
+        # Simulate scanning delay using a singleShot timer
+        QtCore.QTimer.singleShot(2500, self.update_networks)
         return
+
+    # def scan_networks(self):
+    #     print("Inside scan_networks")
+    #     # Start scanning networks
+    #     self.interface.scan()  # Start scanning
+    #     self.update_current_network_info()
+    #     QtCore.QTimer.singleShot(2500, self.update_networks)  # Wait for results
+
+    #     return
+
+    # def update_networks(self):
+    #     try:
+    #         # self.interface.scan()  # Start the scan
+    #         results = self.interface.scan_results()  # Get scan results
+            
+    #         if results is None:
+    #             print("No scan results found.")
+    #             return
+            
+    #         print("Inside update_networks: ", results)
+    #         print("Number of networks found: ", len(results))  # Check the number of networks
+
+    #         # Check if the model exists, and clear it if so
+    #         model = self.listView.model()
+    #         if model is None:
+    #             model = QtGui.QStandardItemModel()  # Initialize a new model if none exists
+    #             self.listView.setModel(model)
+    #         else:
+    #             model.clear()  # Clear the model before re-populating
+            
+    #         # Populate the QListView with scanned networks
+    #         self.populate_networks_in_listview(results)
+
+    #     except Exception as e:
+    #         print(f"Error during network scanning: {e}").
 
     def update_networks(self):
         try:
-            # self.interface.scan()  # Start the scan
-            results = self.interface.scan_results()  # Get scan results
-            
-            if results is None:
+            # Fetch network scan results using the subprocess-based function
+            results = self.get_wifi_info()  # Replace with your updated function
+            current_network = self.get_current_network()
+            self.label_17.setText(current_network)
+            if not results:
                 print("No scan results found.")
                 return
-            
+
             print("Inside update_networks: ", results)
-            print("Number of networks found: ", len(results))  # Check the number of networks
+            print("Number of networks found: ", len(results))
 
             # Check if the model exists, and clear it if so
             model = self.listView.model()
@@ -471,7 +885,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.listView.setModel(model)
             else:
                 model.clear()  # Clear the model before re-populating
-            
+
             # Populate the QListView with scanned networks
             self.populate_networks_in_listview(results)
 
@@ -492,19 +906,19 @@ class MainWindow(QtWidgets.QMainWindow):
             frame.deleteLater()  # Remove the frame from the layout
         self.network_frames.clear()  # Clear the list
 
-    def get_current_network(self):
+    # def get_current_network(self):
         # Check if the interface is connected
-        print(f"Interface status: {self.iface.status()}")
-        if self.iface.status() == 4:
+        # print(f"Interface status: {self.iface.status()}")
+        # if self.iface.status() == 4:
             # Get the current network profile from the connected networks
-            profiles = self.iface.network_profiles()  # Get saved profiles
-            print(f"Profiles found: {len(profiles)}")
+            # profiles = self.iface.network_profiles()  # Get saved profiles
+            # print(f"Profiles found: {len(profiles)}")
             
-            for profile in profiles:
+            # for profile in profiles:
                 # Check if the profile is active and has a valid BSSID
-                if profile.ssid is not None:
-                    print(f"Connected to: {profile.ssid}")
-                    return profile.ssid  # Return the SSID of the connected network
+                # if profile.ssid is not None:
+                #     print(f"Connected to: {profile.ssid}")
+                #     return profile.ssid  # Return the SSID of the connected network
 
         print("Interface is not connected or no valid profiles found.")
         return None  # Return None if no network connected
@@ -526,51 +940,87 @@ class MainWindow(QtWidgets.QMainWindow):
         delegate = NetworkDelegate(self.listView)
         self.listView.setItemDelegate(delegate)
 
-    def update_current_network_info(self):
-        ssid = self.get_current_network()  # Get the current SSID from pywifi
-        print("Get Current Network:",ssid)
-        if ssid is not None:  # If there is a current network
-            self.label_17.setText(ssid)  # Set the SSID to label_17
-            self.current_network.show()  # Show current_network QFrame
-            self.label_10.show()  # Show label_10
-            self.label_17.setStyleSheet("color: :rgb(35, 78, 232);")
-            self.label_15.show()
-        else:
-            self.label_17.setText("Not Connected")  # Set the SSID to label_17
-            self.label_17.setStyleSheet("color: red;")
-            self.label_15.hide()
-            self.current_network.show()  # Show current_network QFrame
-            self.label_10.show()  # Hide label_10
+    def get_wifi_info(self):
+        try:
+            # Run the nmcli command to list available Wi-Fi networks
+            result = subprocess.run(['nmcli', '-f', 'SSID,SIGNAL,SECURITY', 'dev', 'wifi'], stdout=subprocess.PIPE, text=True)
 
+            # Split the output into lines
+            lines = result.stdout.splitlines()
 
-    def connect_to_network(self, network):
-        # Check if the network is secured
-        if network.akm and network.akm[0] == 'wpa-psk':
-            # Instead of showing a password dialog, switch to screen_7
-            self.screen_7.show()  # Assuming screen_7 is part of a QStackedWidget
-            print("Switched to screen_7 for secured network:", network.ssid)
-        else:
-            # Handle open network connection here
-            self.connect_to_open_network(network)
+            # Extract SSID, Signal Strength, and Security from the lines
+            wifi_networks = []
+            for line in lines[1:]:  # Skip the header line
+                parts = line.split()
+
+                if len(parts) >= 3:  # Ensure the line has at least SSID, SIGNAL, and SECURITY
+                    # Dynamically find the signal strength column by checking for valid percentage values
+                    signal_index = next((i for i, p in enumerate(parts) if p.isdigit() and 0 <= int(p) <= 100), None)
+
+                    if signal_index is not None:
+                        ssid = " ".join(parts[:signal_index]).strip()
+                        signal_strength = parts[signal_index]
+                        security = " ".join(parts[signal_index + 1:]).strip() or "OPEN"
+
+                        wifi_networks.append({
+                            'ssid': ssid,
+                            'signal': signal_strength,
+                            'security': security,
+                        })
+
+            return wifi_networks
+
+        except Exception as e:
+            print(f"Error fetching Wi-Fi networks: {e}")
+            return []
+
+    def get_current_network(self):
+        try:
+            # Use iwgetid to get the current connected network's SSID
+            result = subprocess.run(['iwgetid', '-r'], stdout=subprocess.PIPE, text=True)
+            # current_network = self.get_current_network()
+            self.label_17.setText(result.stdout.strip())
+            return result.stdout.strip()  # Strip removes any trailing newline characters
+        except Exception as e:
+            print(f"Error fetching current Wi-Fi network: {e}")
+            return None
+        
+    # def on_network_double_clicked(self, index):
+    #     print("Double Clicked Function Triggered!!!")
+    #     model = self.listView.model()
+    #     network = model.itemFromIndex(index).data(QtCore.Qt.ItemDataRole.UserRole)  # Retrieve the network data
+
+    #     # Check if the network is secured
+    #     secured_akm_types = [const.AKM_TYPE_WPA, const.AKM_TYPE_WPA2, const.AKM_TYPE_WPA2PSK]
+    #     is_secured = network.akm and any(akm in secured_akm_types for akm in network.akm)
+
+    #     if is_secured:
+    #         # Show screen_7 if the network is secured
+            
+    #         print(f"Switched to screen_7 for secured network: {network.ssid} Type of network: {type(network)}")
+    #         self.selectedNetwork = network
+    #         self.handle_screen_change(7)
+    #     else:
+    #         # Connect to open network or handle it accordingly
+    #         self.connect_to_open_network(network)
 
     def on_network_double_clicked(self, index):
         print("Double Clicked Function Triggered!!!")
         model = self.listView.model()
-        network = model.itemFromIndex(index).data(QtCore.Qt.UserRole)  # Retrieve the network data
+        network = model.itemFromIndex(index).data(QtCore.Qt.ItemDataRole.UserRole)  # Retrieve the network data
 
         # Check if the network is secured
-        secured_akm_types = [const.AKM_TYPE_WPA, const.AKM_TYPE_WPA2, const.AKM_TYPE_WPA2PSK]
-        is_secured = network.akm and any(akm in secured_akm_types for akm in network.akm)
+        is_secured = network.get("security", "Open") != "--"
 
         if is_secured:
-            # Show screen_7 if the network is secured
-            
-            print(f"Switched to screen_7 for secured network: {network.ssid} Type of network: {type(network)}")
+            print(f"Switched to screen_7 for secured network: {network.get('ssid')} Type of network: {type(network)}")
+            print(f"Network object: {network}")
             self.selectedNetwork = network
             self.handle_screen_change(7)
         else:
-            # Connect to open network or handle it accordingly
             self.connect_to_open_network(network)
+
+
 
 
     # def connect_to_secured_network(self, network, password):
@@ -621,70 +1071,82 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
 
     def connect_to_secured_network(self, network, password):
-        self.label_19.setText("Connecting...")
         print(f"Entered Password in Secured Network Function: {password}")
-        profile = Profile()
 
-        if not hasattr(network, 'ssid'):
+        # Validate the network object
+        ssid = network.get("ssid")
+        if not ssid:
             print("Invalid network object; it does not have an SSID.")
+            self.label_19.setText("Connection Failed: Invalid Network")
             return
 
-        profile.ssid = network.ssid
-        profile.akm.append(const.AKM_TYPE_WPA2PSK)
-        profile.cipher = const.CIPHER_TYPE_CCMP
-        profile.auth = const.AUTH_ALG_OPEN
-        profile.key = password  # Use the entered password
-
         try:
-            # Remove existing profiles and add the new one
-            self.interface.remove_all_network_profiles()
-            self.interface.add_network_profile(profile)
-            self.interface.connect(profile)
-
             self.label_19.setText("Connecting...")
-            print("Connecting...")
-            # Wait for a bit to allow connection to establish
-            time.sleep(10)  # Increase wait time if necessary
 
-            # Polling for the connection status
-            for _ in range(30):  # Check status for up to 30 seconds
-                status = self.interface.status()
-                profiles = self.interface.network_profiles()  # Log current profiles
-                print(f"Current interface status: {status}")
-                print(f"Active profiles: {[p.ssid for p in profiles]}")  # Log active profiles
-                
-                if status == 4:
-                    print(f"Successfully connected to {profile.ssid}")
-                    break
-                # elif status == 4:  # Transitional state
-                #     print("Still in transitional state... waiting to connect.")
-                else:
-                    print("Connection failed or not in a valid state.")
-                    break  # Exit if not in a connecting state
-                
-                # Check OS connection as a fallback
-                # if self.check_os_connection():
-                #     print("Connected according to OS.")
-                #     break
-
-                # time.sleep(1)  # Sleep for a second before checking again
+            print("Connecting to a network..")
+            # Construct the command to connect to the network
+            connect_command = [
+                "nmcli", "dev", "wifi", "connect", ssid, "password", password
+            ]
+            print(f"Running command: {' '.join(connect_command)}")
+            
+            # Execute the connection command
+            result = subprocess.run(
+                connect_command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Check the result of the command
+            if result.returncode == 0:
+                print(f"Successfully connected to {ssid}")
+                self.label_19.setText(f"Connected to {ssid}")
+                # Update network info and switch back to the previous screen
+                current_network = self.get_current_network()
+                self.label_17.setText(current_network)
+                self.handle_screen_change(6)
             else:
-                print("Failed to connect within the given timeframe.")
-
-            # Update network info and potentially change the screen afterward
-            self.update_current_network_info()
-            self.handle_screen_change(6)
+                print(f"Failed to connect: {result.stderr}")
+                self.label_19.setText(f"Connection Failed: {result.stderr}")
 
         except Exception as e:
             print(f"An error occurred while connecting: {e}")
+            self.label_19.setText("Connection Error")
 
 
+    def connect_to_open_network(self, network):
+        """
+        Connect to an open Wi-Fi network.
+        :param network: Dictionary containing network details (e.g., SSID)
+        """
+        try:
+            # Get the SSID from the network dictionary
+            ssid = network.get('ssid', 'Unknown Network')
+
+            if not ssid:
+                print("Error: SSID is required to connect to a network.")
+                return
+
+            print(f"Connecting to open network: {ssid}")
+            
+            # Run the nmcli command to connect to the open network
+            result = subprocess.run(['nmcli', 'dev', 'wifi', 'connect', ssid], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+            # Check the result of the command
+            if result.returncode == 0:
+                print(f"Successfully connected to open network: {ssid}")
+            else:
+                print(f"Failed to connect to open network: {ssid}")
+                print(f"Error: {result.stderr}")
+        except Exception as e:
+            print(f"An error occurred while connecting to the open network: {e}")
 
 
     def init_screen6(self):
         
-        
-        self.update_current_network_info()
+        current_network = self.get_current_network()
+        self.label_17.setText(current_network)
 
         # Initialize the listView model if it's not already set
         if self.listView.model() is None:
@@ -694,11 +1156,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def init_screen7(self): 
+        # Navigate back to screen 6 when btn_9 is clicked
         self.btn_9.clicked.connect(lambda: self.handle_screen_change(6))
-        self.label_19.setText(f"Enter Password for {self.selectedNetwork.ssid}")
-        print(f"Entered Password: {self.lineEdit_2.text()}")
         
-        self.btn_10.clicked.connect(lambda: self.connect_to_secured_network(self.selectedNetwork,self.lineEdit_2.text()))
+        # Get the SSID and security type from the selected network
+        ssid = self.selectedNetwork.get('ssid', 'Unknown Network')
+        security = self.selectedNetwork.get('security', 'Open')
+
+        if security == '--':
+            # Directly connect to the open network
+            self.connect_to_open_network(self.selectedNetwork)
+            return
+        else:
+            # Update the label to prompt for a password
+            self.label_19.setText(f"Enter Password for {ssid}")
+            
+            # Connect to the secured network when btn_10 is clicked
+            self.btn_10.pressed.connect(lambda: self.connect_to_secured_network(self.selectedNetwork, self.lineEdit_2.text()))
 
 
     def play_video_on_screen(self, screen_number, video_path):
@@ -749,19 +1223,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Get the geometry of the first and second screens
         # screen_geometry_1 = screens[0].geometry()  # Geometry of the primary screen
-        screen_geometry_2 = screens[1].geometry()  # Geometry of the second screen
+        # screen_geometry_2 = screens[0].geometry()  # Geometry of the second screen
+        # Iterate over the screens to find the one with the resolution 1024x768
+        target_screen = None
+        for screen in screens:
+            size = screen.size()
+            if size.width() == 2880 and size.height() == 1440:
+                target_screen = screen
+                print("Resolution of 2880x1440 screen found")
+                break
+        
+        if target_screen:
+            # Set the window to open on the target screen
+            screen_geometry = target_screen.geometry()
+            self.additional_window_1.setGeometry(screen_geometry)
+            # self.additional_window_1.setGeometry(screen_geometry.left(), screen_geometry.top(), 2880, 1440)
+        else:
+            print("No screen with resolution 1440X2880 found.")
 
         # Set geometry for each additional window
         # self.additional_window_1.setGeometry(screen_geometry_1)
-        self.additional_window_1.setGeometry(screen_geometry_2)
+        # self.additional_window_1.setGeometry(500, 0, 1920, 1080)
 
-        self.additional_window_1.show()
+
+        self.additional_window_1.showFullScreen()
         # self.additional_window_2.show()
 
 class AdditionalScreen(QtWidgets.QMainWindow):
     def __init__(self):
         super(AdditionalScreen, self).__init__()
-        self.setFixedSize(1920, 1080)
+        self.setFixedSize(2880, 1440)
         self.setWindowTitle("Stimulus Screen")
 
         # Set up the central widget
@@ -769,6 +1260,8 @@ class AdditionalScreen(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout()
         self.central_widget.setLayout(self.layout)
+
+        # self.move(1920, 0)
 
         # Video display label
         self.video_label = QLabel(self)
@@ -790,12 +1283,13 @@ class AdditionalScreen(QtWidgets.QMainWindow):
 
         # self.next_button = QPushButton("Next Video")
         # self.next_button.clicked.connect(self.play_next_video)
-        # self.layout.addWidget(self.next_button)r
+        # self.layout.addWidget(self.next_button)
 
         # Timer for updating the video frame
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)
+
         # Initialize OpenCV VideoCapture object
         self.cap = None
 
@@ -812,7 +1306,7 @@ class AdditionalScreen(QtWidgets.QMainWindow):
         video_path = self.video_mapping.get(video_id)
         if video_path:
             self.red_dot.hide()
-            self.central_widget.show()
+            self.central_widget.show()  
             self.load_video(video_path)
         else:
             print(f"No video found for ID: {video_id}")
@@ -829,25 +1323,43 @@ class AdditionalScreen(QtWidgets.QMainWindow):
 
             # self.timer.start(30)  # Update the frame every 30 ms
 
-    def play_video(self):
-        """Start or resume video playback."""
-        if not self.video_mapping:
-            return
-
-        video_path = self.video_mapping[self.current_video_index]
-        self.cap = cv2.VideoCapture(video_path)
-
-        if not self.cap.isOpened():
-            print("Error: Could not open video.")
-            return
-
-        # Resume the video playback if it was paused
-        self.is_paused = False
-        # self.timer.start(30)  # Start with 30 ms delay for normal speed (medium)
-
     def pause_video(self):
-        """Pause the video playback."""
-        self.is_paused = True
+        """Pause the video."""
+        if not self.is_paused and self.cap:
+            self.is_paused = True
+            # self.current_frame_pos = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            print(f"Video paused at frame {self.current_frame_pos}")
+
+            # Safely stop the timer
+            if self.timer.isActive():
+                # self.timer.stop()
+                QMetaObject.invokeMethod(self.timer, "stop", Qt.ConnectionType.QueuedConnection)
+
+
+    def play_video(self):
+        """Resume or start the video."""
+        if self.cap is None:
+            print("Error: No video loaded.")
+            return
+
+        if self.is_paused:
+            print("Resuming video...")
+
+            # Use QMetaObject to safely start the timer
+            self.cap.set(self.current_frame_pos)  # Resume from saved position
+            QMetaObject.invokeMethod(self.timer, "start", Qt.ConnectionType.QueuedConnection, Q_ARG(int, self.playback_speed))
+
+            self.is_paused = False
+        else:
+            print("Starting video playback...")
+
+            # Don't reload video if already loaded
+            if self.cap is None or not self.cap.isOpened():
+                self.load_video(self.current_video_index)  # Start the video from the beginning if not loaded
+            else:
+                # Start the timer to update frames if the video is already loaded
+                # self.timer.start(self.playback_speed)
+                QMetaObject.invokeMethod(self.timer, "start", Qt.ConnectionType.QueuedConnection, Q_ARG(int, self.playback_speed))
 
     def set_speed(self, speed):
         """Set playback speed. 'slow', 'medium', and 'high'."""
@@ -928,26 +1440,65 @@ class NetworkDelegate(QtWidgets.QStyledItemDelegate):
         # Fetch the network data
         network = index.data(Qt.ItemDataRole.UserRole)
 
-        # Draw the background (white, rounded) with no border and bottom margin
-        painter.save()
-        rect = option.rect
+        # Ensure that 'network' is a dictionary with the expected keys
+        if isinstance(network, dict):
+            ssid = network.get('ssid', 'Unknown SSID')
+            signal_strength = network.get('signal')
+            security_status = network.get('security', 'Open')
 
-        # Define bottom margin
-        bottom_margin = 7  # Margin at the bottom
+            if security_status != '--':
+                security_status = 'Secured'
+            else:
+                security_status = 'Open'
 
-        # Adjust the rectangle height to create bottom margin
-        adjusted_rect = QtCore.QRect(rect.x(), rect.y(), rect.width(), rect.height() - bottom_margin)
+            # Check if signal_strength is a valid number (integer) for signal strength
+            try:
+                signal_strength_int = int(signal_strength)
+                if signal_strength_int > 50:
+                    signal_strength = "Excellent"
+                elif signal_strength_int > 70:
+                    signal_strength = "Good"
+                else:
+                    signal_strength = "Weak"
+            except ValueError:
+                # If signal_strength is not a valid integer (e.g., 'WPA1' security type), handle it as 'Unknown'
+                signal_strength = "Normal"
 
-        # Set rendering hints
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # White background
-        painter.setPen(QtCore.Qt.NoPen)  # Set no pen to avoid borders
+            # Set up painting
+            painter.save()
+            rect = option.rect
 
-        # Draw rounded rectangle with no border
-        painter.drawRoundedRect(adjusted_rect, 30, 30)  # Rounded corners
+            # Define bottom margin
+            bottom_margin = 7  # Margin at the bottom
+            adjusted_rect = QtCore.QRect(rect.x(), rect.y(), rect.width(), rect.height() - bottom_margin)
 
-        # Restore painter settings
-        painter.restore()
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 255)))  # White background
+            painter.setPen(QtCore.Qt.PenStyle.NoPen)  # Set no pen to avoid borders
+            painter.drawRoundedRect(adjusted_rect, 30, 30)  # Rounded corners
+
+            # Set up icon position and size
+            icon_rect = QtCore.QRect(rect.x() + 25, rect.y() + 20, 50, 50)  # Adjusted size
+            icon_pixmap = QtGui.QPixmap('./rsc/icon_wifi.png')
+
+            if icon_pixmap.isNull():
+                print("Failed to load the icon.")
+            else:
+                icon_pixmap = icon_pixmap.scaled(50, 50, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
+                painter.drawPixmap(icon_rect, icon_pixmap)
+
+            # Draw SSID with Product Sans font
+            painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Weight.Bold))
+            painter.setPen(QtGui.QColor(0, 0, 0))  # Black for SSID
+            painter.drawText(rect.x() + 100, rect.y() + 40, f"{ssid}")
+
+            # Draw signal strength and security status
+            painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Weight.Bold))
+            painter.setPen(QtGui.QColor(192, 74, 50))  # Color for signal and status
+            painter.drawText(rect.x() + 100, rect.y() + 70, f"{signal_strength} | {security_status}")
+
+            # Restore painter settings
+            painter.restore()
 
         # Set up icon position and size
         icon_rect = QtCore.QRect(rect.x() + 25, rect.y() + 20, 50, 50)  # Adjusted size
@@ -956,31 +1507,30 @@ class NetworkDelegate(QtWidgets.QStyledItemDelegate):
         if icon_pixmap.isNull():
             print("Failed to load the icon.")
         else:
-            icon_pixmap = icon_pixmap.scaled(50, 50, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            icon_pixmap = icon_pixmap.scaled(50, 50, QtCore.Qt.AspectRatioMode.KeepAspectRatio, QtCore.Qt.TransformationMode.SmoothTransformation)
             painter.drawPixmap(icon_rect, icon_pixmap)
 
 
-        # Set up text (SSID and signal strength/security status)
-        ssid = network.ssid
-        signal_strength = "Excellent" if int(network.signal) > -50 else "Good" if int(network.signal) > -70 else "Weak"
-        # Update the security status check
-        # Remove WPA3 since it might not be available in pywifi.const
-        secured_akm_types = [const.AKM_TYPE_WPA, const.AKM_TYPE_WPA2, const.AKM_TYPE_WPA2PSK]
+        # # Set up text (SSID and signal strength/security status)
+        # print(f"Networks: {network}")
+        # ssid = network.ssid
+        # signal_strength = "Excellent" if int(network.signal) > -50 else "Good" if int(network.signal) > -70 else "Weak"
+        # # Update the security status check
+        # # Remove WPA3 since it might not be available in pywifi.const
+        # secured_akm_types = [const.AKM_TYPE_WPA, const.AKM_TYPE_WPA2, const.AKM_TYPE_WPA2PSK]
 
-        security_status = "Secured" if network.akm and any(akm in secured_akm_types for akm in network.akm) else "Open"
+        # security_status = "Secured" if network.akm and any(akm in secured_akm_types for akm in network.akm) else "Open"
 
 
+        # # Draw SSID with Product Sans font
+        # painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Bold))
+        # painter.setPen(QtGui.QColor(0, 0, 0))  # Black for SSID
+        # painter.drawText(rect.x() + 100, rect.y() + 40, f"{ssid}")
 
-
-        # Draw SSID with Product Sans font
-        painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Bold))
-        painter.setPen(QtGui.QColor(0, 0, 0))  # Black for SSID
-        painter.drawText(rect.x() + 100, rect.y() + 40, f"{ssid}")
-
-        # Draw signal strength and security status with different color
-        painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Bold))
-        painter.setPen(QtGui.QColor(192, 74, 50))  # Color for signal and status
-        painter.drawText(rect.x() + 100, rect.y() + 70, f"{signal_strength} | {security_status}")
+        # # Draw signal strength and security status with different color
+        # painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Bold))
+        # painter.setPen(QtGui.QColor(192, 74, 50))  # Color for signal and status
+        # painter.drawText(rect.x() + 100, rect.y() + 70, f"{signal_strength} | {security_status}")
 
     def sizeHint(self, option, index):
         # Set the item size (width, height)
@@ -990,7 +1540,6 @@ class AppointmentDelegate(QtWidgets.QStyledItemDelegate):
     def paint(self, painter, option, index):
         # Fetch the appointment data
         appointment = index.data(QtCore.Qt.ItemDataRole.UserRole)
-
         # Draw shadow first (to give the illusion of elevation)
         self.draw_shadow(painter, option.rect)
 
@@ -1008,24 +1557,49 @@ class AppointmentDelegate(QtWidgets.QStyledItemDelegate):
         painter.drawRoundedRect(adjusted_rect, 30, 30)  # Rounded corners
 
         painter.restore()
+        
+        # Get Appointment ID
+        
+        if appointment['meetingId'] not in appointment_list:
+            appointment_list.append(appointment['meetingId'])
+
+        if appointment['token'] not in token_list:
+            token_list.append(appointment['token'])
+    
 
         # Draw appointment details (time, date, and doctor name)
         painter.setFont(QtGui.QFont("Product Sans", 16, QtGui.QFont.Weight.Bold))
         painter.setPen(QtGui.QColor(0, 0, 0))  # Black for time and date
 
-        # Draw time
-        painter.drawText(rect.x() + 20, rect.y() + 40, f"{appointment['AppointmentTime']}")
+        # Draw time.
+        appointment_time = appointment['AppointmentTime']
+        if appointment_time == None:
+            painter.drawText(rect.x() + 20, rect.y() + 40, f"Instant Meeting")
+        else:
+            time_obj = datetime.strptime(appointment_time, "%H:%M")  # Convert to datetime object
+            formatted_time = time_obj.strftime("%I:%M %p")
+            painter.drawText(rect.x() + 20, rect.y() + 40, f"{formatted_time}")
 
         # Draw date
-        painter.drawText(rect.x() + 20, rect.y() + 70, f"{appointment['AppointmentDate']}")
+        appointment_date = appointment['AppointmentDate']
+        if appointment_time == None:
+            painter.drawText(rect.x() + 20, rect.y() + 70, f"")
+        else:
+            date_obj = datetime.strptime(appointment_date, "%Y-%m-%dT%H:%M:%S.%fZ")
+            formatted_date = date_obj.strftime("%Y-%m-%d")
+            painter.drawText(rect.x() + 20, rect.y() + 70, f"{formatted_date}")
 
         # Draw doctor name
         painter.setPen(QtGui.QColor(120, 120, 120))  # Grey for doctor name
-        painter.drawText(rect.x() + 20, rect.y() + 110, f"{appointment['DoctorName']}")
+        painter.drawText(rect.x() + 20, rect.y() + 110, f"{appointment['Doctor']}")
 
         # Draw the 'Join' button with hover effect
         button_rect = QtCore.QRect(rect.x() + 350, rect.y() + 20, 100, 40)  # Adjust button position
         self.draw_button(painter, button_rect, option, "Join")
+
+        #################################################################################################################
+
+        #################################################################################################################
 
     def sizeHint(self, option, index):
         # Set the item size (width, height)
@@ -1105,33 +1679,36 @@ class AppointmentDelegate(QtWidgets.QStyledItemDelegate):
 #     def get_password(self):
 #         return self.password_input.text()
 
-
-
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    
+    # Create the main window
     window = MainWindow()
-     # Get the list of available screens
+    
+    # Get the list of available screens
     screens = app.screens()
-
-    # Choose the second screen (index 1, as index 0 is the primary screen)
-    second_screen = screens[0]  # This is for the second screen
-    # Fetch and print the maximum resolution of each screen
-    for index, screen in enumerate(screens):
-        screen_geometry = screen.geometry()
-        screen_width = screen_geometry.width()
-        screen_height = screen_geometry.height()
-        print(f"Screen {index + 1}: {screen_width}x{screen_height}")
-
-    # Get the geometry of the second screen
-    screen_geometry = second_screen.geometry()
-    # player = AdditionalScreen()
-    # player.show()
-    # Set the window geometry based on the second screen's geometry
-    window.setGeometry(screen_geometry)
+    print(f"screens: {screens}")
+    
+    # Iterate over the screens to find the one with the resolution 1024x768
+    target_screen = None
+    for screen in screens:
+        size = screen.size()
+        if size.width() == 600 and size.height() == 1024:
+            target_screen = screen
+            print("1024x600 screen found..")
+            break
+    
+    if target_screen:
+        # Set the window to open on the target screen
+        screen_geometry = target_screen.geometry()
+        window.setGeometry(screen_geometry.left(), screen_geometry.top(), 1024, 600)
+    else:
+        print("No screen with resolution 1024x600 found.")
+    
+    # Show the window
     window.showFullScreen()
+    
     sys.exit(app.exec())
 
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
