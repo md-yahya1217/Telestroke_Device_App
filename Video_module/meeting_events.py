@@ -5,49 +5,21 @@ import asyncio
 import os
 from videosdk import MeetingConfig, VideoSDK
 import dotenv
-dotenv.load_dotenv()
-
-VIDEOSDK_TOKEN = os.getenv("VIDEOSDK_TOKEN")
-MEETING_ID = os.getenv("MEETING_ID")
-NAME = "Wajahat"
 
 
 class MyMeetingEventHandler(MeetingEventHandler):
     def __init__(self):
         super().__init__()
-        
+        # self.app = app_instance  # Store the app instance to access and update the meeting state
 
     def on_error(self, data):
         print("Meeting Error: ", data)
 
     def on_meeting_joined(self, data):
-        print("Meeting joined")
-        # Capture video from the webcam
-        # cap = cv2.VideoCapture(0)  # 0 is the default camera
+        print(f"Meeting joined: {data}")
 
-        # if not cap.isOpened():
-        #     print("Error: Could not open video device")
-        #     return
-
-        # while True:
-        #     ret, frame = cap.read()
-        #     if not ret:
-        #         print("Error: Could not read frame")
-        #         break
-
-        #     # Display the resulting frame
-        #     cv2.imshow('Webcam', frame)
-
-        #     # Break the loop on 'q' key press
-        #     if cv2.waitKey(1) & 0xFF == ord('q'):
-        #         break
-
-        # # Release the capture when done
-        # cap.release()
-        # cv2.destroyAllWindows()
-
-    def on_meeting_left(self, data):
-        print("Meeting left")
+    def on_meeting_left(self, data: None):
+        print(f"Meeting left from meeting events ")
 
     def on_participant_joined(self, participant: Participant):
         print("Participant joined:", participant.display_name)
@@ -62,3 +34,4 @@ class MyMeetingEventHandler(MeetingEventHandler):
 
     def on_meeting_state_change(self, data):
         print("Meeting state changed:", data)
+        
